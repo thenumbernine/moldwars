@@ -1,5 +1,6 @@
 #!/usr/bin/env rua
 -- I can't believe how slow this goes in numo9
+local template = require 'template'
 local gl = require 'gl'
 local glreport = require 'gl.report'
 local GLTex2D = require 'gl.tex2d'
@@ -24,6 +25,8 @@ App.initGL = |:|do
 		self.texData[i] = math.random(0, 0xffffffff)
 	end
 	self.tex = GLPingPong{
+		--numBuffers = 1,	-- works with 1 or 2 buffers
+		numBuffers = 2,	-- works with 1 or 2 buffers
 		width = texWidth,
 		height = texHeight,
 		internalFormat = gl.GL_RGBA,
@@ -35,7 +38,6 @@ App.initGL = |:|do
 		},
 		data = self.texData,
 	}
-
 	self.geometry = GLGeometry{
 		mode = gl.GL_TRIANGLE_STRIP,
 		vertexes = {
@@ -47,19 +49,6 @@ App.initGL = |:|do
 			},
 			dim = 2,
 		},
-	}
-	local noiseData = ffi.new('uint8_t[?]', len)
-	self.noiseTex = GLTex2D{
-		width = texWidth,
-		height = texHeight,
-		internalFormat = gl.GL_R8,
-		magFilter = gl.GL_NEAREST,
-		minFilter = gl.GL_NEAREST,
-		wrap = {
-			s = gl.GL_REPEAT,
-			t = gl.GL_REPEAT,
-		},
-		data = noiseData,
 	}
 	self.drawObj = GLSceneObject{
 		program = {
@@ -102,44 +91,59 @@ void main() {
 	tcv = vertex;
 }
 ]],
-			fragmentCode = [[
+			fragmentCode = template([[
 uniform sampler2D tex;
-uniform isampler2D noiseTex;
-uniform vec2 noiseOfs;
+uniform vec3 noiseOfs;
 in vec2 tcv;
 out vec4 fragColor;
+
+// https://stackoverflow.com/a/34223787
+float random(vec2 st) {
+	return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+}
+
 void main() {
-	vec2 texSize = vec2(textureSize(tex, 0));
-	vec2 du = vec2(1., 1.) / texSize;
-	float noise = texture(noiseTex, tcv + noiseOfs, 0).r * 4.;
+	int noise = int(255. * (random(noiseOfs.xy + tcv) + noiseOfs.z - 1.));
 	vec2 tcsrc = tcv;
-	if (noise < 1.) {
-		tcsrc.x += du.x;
-	} else if (noise < 2.) {
-		tcsrc.x -= du.x;
-	} else if (noise < 3.) {
-		tcsrc.y += du.y;
+	if ((noise & 2) == 0) {
+		if ((noise & 1) == 0) {
+			tcsrc.x += <?=1/texWidth?>;
+		} else {
+			tcsrc.x -= <?=1/texWidth?>;
+		}
 	} else {
-		tcsrc.y -= du.y;
+		if ((noise & 1) == 0) {
+			tcsrc.y += <?=1/texHeight?>;
+		} else {
+			tcsrc.y -= <?=1/texHeight?>;
+		}
 	}
 	fragColor = texture(tex, tcsrc, 0);
-//fragColor.r += noise's bit 2
-//fragColor.g += noise's bit 3
-//fragColor.b += noise's bit 4
-//fragColor.a += noise's bit 5
+
+	// now we need 3x 3 random variables = random # from 0-26
+	// x our 4 above = 108 total, so we aren't passing 127 let alone 255
+	int rch = noise >> 2;
+	fragColor.r += float((rch % 3) - 1) / 256.;
+	rch /= 3;
+	fragColor.g += float((rch % 3) - 1) / 256.;
+	rch /= 3;
+	fragColor.b += float((rch % 3) - 1) / 256.;
+	//fragColor.a += r3-1
+	fragColor = mod(fragColor, vec4(1., 1., 1., 1.));
 }
-]],
+]], {
+	texWidth = texWidth,
+	texHeight = texHeight,
+}),
 			uniforms = {
 				tex = 0,
-				noiseTex = 1,
 			},
 		},
 		uniforms = {
-			noiseOfs = {0,0},
+			noiseOfs = {0,0,0},
 		},
 		texs = {
 			self.tex:prev(),
-			noiseTex,
 		},
 		geometry = self.geometry,
 	}
@@ -154,14 +158,6 @@ local fpsFrames = 0
 local fpsSeconds = 0
 local drawsPerSecond = 0
 
---[[
-while-loop counting 28mil fps cycles/second on a 2.9 GHz means 103 cycles per frame, i.e. frame update takes 3.5e-8 seconds
-empty App.update loop is 13k fps, i.e. 223077 cycles, i.e. frame update takes 7.7e-5 seconds
-App.update + draw without texData-update: 1450 fps, 2000000 cycles, i.e. frame update takes 5e-7 seconds
-App.update + texData-update without draw: 300 fps, 9666667 cycles, i.e. frame update takes 0.003 seconds
-with subimage and draw, 250 fps, i.e. 11600000 cycles, i.e. frame update takes 0.004 seconds
---]]
---while true do
 App.update = |:|do
 	local thisTime = timer.getTime()
 	local deltaTime = thisTime - lastTime
@@ -179,15 +175,20 @@ App.update = |:|do
 	gl.glViewport(0, 0, texWidth, texHeight)
 	self.updateObj.uniforms.noiseOfs[1] = math.random()
 	self.updateObj.uniforms.noiseOfs[2] = math.random()
+	self.updateObj.uniforms.noiseOfs[3] = math.random()
 	self.updateObj:draw()
+
+	-- [[ only needed for #self.tex.hist > 1
 	self.tex:swap()
 	self.fbo:setColorAttachment(self.tex:cur())
 	self.updateObj.texs[1] = self.tex:prev()
 	self.drawObj.texs[1] = self.tex:prev()
+	--]]
+
 	self.fbo:unbind()
 	gl.glViewport(0, 0, self.width, self.height)
 	
 	self.drawObj:draw()
-	glreport'here'
+glreport'here'
 end
 App():run()
