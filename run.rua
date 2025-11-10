@@ -1,12 +1,16 @@
 #!/usr/bin/env rua
 -- I can't believe how slow this goes in numo9
-local App = require 'glapp':subclass()
 local gl = require 'gl'
-local getTime = require 'ext.timer'.getTime
+local glreport = require 'gl.report'
 local GLTex2D = require 'gl.tex2d'
+local GLPingPong = require 'gl.pingpong'
 local GLSceneObject = require 'gl.sceneobject'
-App.title = 'MoldWars'
+local GLGeometry = require 'gl.geometry'
+local GLFBO = require 'gl.fbo'
 
+local App = require 'glapp':subclass()
+
+App.title = 'MoldWars'
 
 -- tex and update size:
 local texWidth, texHeight = 256, 256
@@ -19,15 +23,45 @@ App.initGL = |:|do
 	for i=0,len-1 do
 		self.texData[i] = math.random(0, 0xffffffff)
 	end
-	self.tex = GLTex2D{
+	self.tex = GLPingPong{
 		width = texWidth,
 		height = texHeight,
 		internalFormat = gl.GL_RGBA,
 		magFilter = gl.GL_NEAREST,
 		minFilter = gl.GL_NEAREST,
+		wrap = {
+			s = gl.GL_REPEAT,
+			t = gl.GL_REPEAT,
+		},
 		data = self.texData,
 	}
-	self.sceneObj = GLSceneObject{
+
+	self.geometry = GLGeometry{
+		mode = gl.GL_TRIANGLE_STRIP,
+		vertexes = {
+			data = {
+				0, 0,
+				1, 0,
+				0, 1,
+				1, 1,
+			},
+			dim = 2,
+		},
+	}
+	local noiseData = ffi.new('uint8_t[?]', len)
+	self.noiseTex = GLTex2D{
+		width = texWidth,
+		height = texHeight,
+		internalFormat = gl.GL_R8,
+		magFilter = gl.GL_NEAREST,
+		minFilter = gl.GL_NEAREST,
+		wrap = {
+			s = gl.GL_REPEAT,
+			t = gl.GL_REPEAT,
+		},
+		data = noiseData,
+	}
+	self.drawObj = GLSceneObject{
 		program = {
 			version = 'latest',
 			precision = 'best',
@@ -44,31 +78,78 @@ uniform sampler2D tex;
 in vec2 tcv;
 out vec4 fragColor;
 void main() {
-	fragColor = texture(tex, tcv);
+	fragColor = texture(tex, tcv, 0);
 }
 ]],
 			uniforms = {
 				tex = 0,
 			},
 		},
-		vertexes = {
-			data = {
-				0, 0,
-				1, 0,
-				0, 1,
-				1, 1,
-			},
-			dim = 2,
+		texs = {
+			self.tex:prev(),
 		},
-		geometry = {
-			mode = gl.GL_TRIANGLE_STRIP,
-		},
+		geometry = self.geometry,
 	}
-	self.sceneObj.program:use()
-	self.sceneObj.vao:bind()
+	self.updateObj = GLSceneObject{
+		program = {
+			version = 'latest',
+			precision = 'best',
+			vertexCode = [[
+in vec2 vertex;
+out vec2 tcv;
+void main() {
+	gl_Position = vec4(vertex * 2. - 1., 0., 1.);
+	tcv = vertex;
+}
+]],
+			fragmentCode = [[
+uniform sampler2D tex;
+uniform isampler2D noiseTex;
+uniform vec2 noiseOfs;
+in vec2 tcv;
+out vec4 fragColor;
+void main() {
+	vec2 texSize = vec2(textureSize(tex, 0));
+	vec2 du = vec2(1., 1.) / texSize;
+	float noise = texture(noiseTex, tcv + noiseOfs, 0).r * 4.;
+	vec2 tcsrc = tcv;
+	if (noise < 1.) {
+		tcsrc.x += du.x;
+	} else if (noise < 2.) {
+		tcsrc.x -= du.x;
+	} else if (noise < 3.) {
+		tcsrc.y += du.y;
+	} else {
+		tcsrc.y -= du.y;
+	}
+	fragColor = texture(tex, tcsrc, 0);
+//fragColor.r += noise's bit 2
+//fragColor.g += noise's bit 3
+//fragColor.b += noise's bit 4
+//fragColor.a += noise's bit 5
+}
+]],
+			uniforms = {
+				tex = 0,
+				noiseTex = 1,
+			},
+		},
+		uniforms = {
+			noiseOfs = {0,0},
+		},
+		texs = {
+			self.tex:prev(),
+			noiseTex,
+		},
+		geometry = self.geometry,
+	}
+
+	self.fbo = GLFBO{
+		dest = self.tex:cur(),
+	}:unbind()
 end
 
-local lastTime = getTime()
+local lastTime = timer.getTime()
 local fpsFrames = 0
 local fpsSeconds = 0
 local drawsPerSecond = 0
@@ -82,7 +163,7 @@ with subimage and draw, 250 fps, i.e. 11600000 cycles, i.e. frame update takes 0
 --]]
 --while true do
 App.update = |:|do
-	local thisTime = getTime()
+	local thisTime = timer.getTime()
 	local deltaTime = thisTime - lastTime
 	fpsFrames = fpsFrames + 1
 	fpsSeconds = fpsSeconds + deltaTime
@@ -93,20 +174,20 @@ App.update = |:|do
 		fpsSeconds = 0
 	end
 	lastTime = thisTime
+
+	self.fbo:bind()
+	gl.glViewport(0, 0, texWidth, texHeight)
+	self.updateObj.uniforms.noiseOfs[1] = math.random()
+	self.updateObj.uniforms.noiseOfs[2] = math.random()
+	self.updateObj:draw()
+	self.tex:swap()
+	self.fbo:setColorAttachment(self.tex:cur())
+	self.updateObj.texs[1] = self.tex:prev()
+	self.drawObj.texs[1] = self.tex:prev()
+	self.fbo:unbind()
+	gl.glViewport(0, 0, self.width, self.height)
 	
-	-- [[
-	local len = texWidth * texHeight
-	for i=0,len-1 do
-		local di = math.random(0,3)
-		di = (bit.band(di, 1) * 2 - 1) * (bit.band(di, 2) == 2 and texWidth or 1)
-		local src = self.texData[(i + di) % len]
-		local r = (src + math.random(0,2)-1) & 0xff
-		local g = (src + ((math.random(0,2)-1) << 8)) & 0xff00
-		local b = (src + ((math.random(0,2)-1) << 16)) & 0xff0000
-		self.texData[i] = r | g | b
-	end
-	--]]
-	self.tex:subimage()
-	self.sceneObj.geometry:draw()
+	self.drawObj:draw()
+	glreport'here'
 end
 App():run()
