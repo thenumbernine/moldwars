@@ -1,0 +1,120 @@
+#!/usr/bin/env rua
+-- I can't believe how slow this goes in numo9
+local App = require 'glapp':subclass()
+local gl = require 'gl'
+local getTime = require 'ext.timer'.getTime
+local GLTex2D = require 'gl.tex2d'
+local GLSceneObject = require 'gl.sceneobject'
+App.title = 'MoldWars'
+
+
+-- tex and update size:
+local texWidth, texHeight = 336, 189
+App.width = texWidth * 3
+App.height = texHeight * 3
+
+App.initGL = |:|do
+	local len = texWidth * texHeight
+	self.texData = ffi.new('uint16_t[?]', len)
+	for i=0,len-1 do
+		self.texData[i] = math.random(0, 0xffff)
+	end
+	self.tex = GLTex2D{
+		width = texWidth,
+		height = texHeight,
+		internalFormat = gl.GL_RGB565,
+		format = gl.GL_RGB,
+		type = gl.GL_UNSIGNED_SHORT_5_6_5,
+		magFilter = gl.GL_NEAREST,
+		minFilter = gl.GL_NEAREST,
+		data = self.texData,
+	}:unbind()
+	self.sceneObj = GLSceneObject{
+		program = {
+			version = 'latest',
+			precision = 'best',
+			vertexCode = [[
+in vec2 vertex;
+out vec2 tcv;
+void main() {
+	gl_Position = vec4(vertex * 2. - 1., 0., 1.);
+	tcv = vertex;
+}
+]],
+			fragmentCode = [[
+uniform sampler2D tex;
+in vec2 tcv;
+out vec4 fragColor;
+void main() {
+	fragColor = texture(tex, tcv);
+}
+]],
+			uniforms = {
+				tex = 0,
+			},
+		},
+		texs = {
+			self.tex,
+		},
+		vertexes = {
+			data = {
+				0, 0,
+				1, 0,
+				0, 1,
+				1, 1,
+			},
+			dim = 2,
+		},
+		geometry = {
+			mode = gl.GL_TRIANGLE_STRIP,
+		},
+	}
+end
+
+local lastTime = getTime()
+local fpsFrames = 0
+local fpsSeconds = 0
+local drawsPerSecond = 0
+
+App.update = |:|do
+	
+	local thisTime = getTime()
+	local deltaTime = thisTime - lastTime
+	fpsFrames = fpsFrames + 1
+	fpsSeconds = fpsSeconds + deltaTime
+	if fpsSeconds > 1 then
+		print('FPS: '..(fpsFrames / fpsSeconds))
+		drawsPerSecond = 0
+		fpsFrames = 0
+		fpsSeconds = 0
+	end
+	lastTime = thisTime
+
+	local w, h = texWidth, texHeight
+	for y=0,h-1 do
+		for x=0,w-1 do
+			local di = math.random(0,3)
+			if di == 0 then
+				di = 1
+			elseif di == 1 then
+				di = -1
+			elseif di == 2 then
+				di = w
+			elseif di == 3 then
+				di = -w
+			end
+			local i = x + y * w
+			local src = self.texData[(i + di) % (w * h)]
+			local r = ((src & 0x1f) + math.random(0,2)-1) & 0x1f
+			local g = (((src >> 6) & 0x1f) + math.random(0,2)-1) & 0x1f
+			local b = ((src >> 11) + math.random(0,2)-1) & 0x1f
+			self.texData[i] = r | (g << 6) | ((g << 1) & 0x20) | (b << 11)
+		end
+	end
+	self.tex
+		:bind()
+		:subimage()
+	gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+	self.sceneObj:draw()
+end
+App():run()
