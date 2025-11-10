@@ -9,26 +9,24 @@ App.title = 'MoldWars'
 
 
 -- tex and update size:
-local texWidth, texHeight = 336, 189
+local texWidth, texHeight = 256, 256
 App.width = texWidth * 3
 App.height = texHeight * 3
 
 App.initGL = |:|do
 	local len = texWidth * texHeight
-	self.texData = ffi.new('uint16_t[?]', len)
+	self.texData = ffi.new('uint32_t[?]', len)
 	for i=0,len-1 do
-		self.texData[i] = math.random(0, 0xffff)
+		self.texData[i] = math.random(0, 0xffffffff)
 	end
 	self.tex = GLTex2D{
 		width = texWidth,
 		height = texHeight,
-		internalFormat = gl.GL_RGB565,
-		format = gl.GL_RGB,
-		type = gl.GL_UNSIGNED_SHORT_5_6_5,
+		internalFormat = gl.GL_RGBA,
 		magFilter = gl.GL_NEAREST,
 		minFilter = gl.GL_NEAREST,
 		data = self.texData,
-	}:unbind()
+	}
 	self.sceneObj = GLSceneObject{
 		program = {
 			version = 'latest',
@@ -53,9 +51,6 @@ void main() {
 				tex = 0,
 			},
 		},
-		texs = {
-			self.tex,
-		},
 		vertexes = {
 			data = {
 				0, 0,
@@ -69,6 +64,8 @@ void main() {
 			mode = gl.GL_TRIANGLE_STRIP,
 		},
 	}
+	self.sceneObj.program:use()
+	self.sceneObj.vao:bind()
 end
 
 local lastTime = getTime()
@@ -77,7 +74,6 @@ local fpsSeconds = 0
 local drawsPerSecond = 0
 
 App.update = |:|do
-	
 	local thisTime = getTime()
 	local deltaTime = thisTime - lastTime
 	fpsFrames = fpsFrames + 1
@@ -89,32 +85,25 @@ App.update = |:|do
 		fpsSeconds = 0
 	end
 	lastTime = thisTime
-
-	local w, h = texWidth, texHeight
-	for y=0,h-1 do
-		for x=0,w-1 do
-			local di = math.random(0,3)
-			if di == 0 then
-				di = 1
-			elseif di == 1 then
-				di = -1
-			elseif di == 2 then
-				di = w
-			elseif di == 3 then
-				di = -w
-			end
-			local i = x + y * w
-			local src = self.texData[(i + di) % (w * h)]
-			local r = ((src & 0x1f) + math.random(0,2)-1) & 0x1f
-			local g = (((src >> 6) & 0x1f) + math.random(0,2)-1) & 0x1f
-			local b = ((src >> 11) + math.random(0,2)-1) & 0x1f
-			self.texData[i] = r | (g << 6) | ((g << 1) & 0x20) | (b << 11)
+	local len = texWidth * texHeight
+	for i=0,len-1 do
+		local di = math.random(0,3)
+		if di == 0 then
+			di = 1
+		elseif di == 1 then
+			di = -1
+		elseif di == 2 then
+			di = texWidth
+		elseif di == 3 then
+			di = -texWidth
 		end
+		local src = self.texData[(i + di) % len]
+		local r = (src + math.random(0,2)-1) & 0xff
+		local g = (src + ((math.random(0,2)-1) << 8)) & 0xff00
+		local b = (src + ((math.random(0,2)-1) << 16)) & 0xff0000
+		self.texData[i] = r | g | b
 	end
-	self.tex
-		:bind()
-		:subimage()
-	gl.glClear(gl.GL_COLOR_BUFFER_BIT)
-	self.sceneObj:draw()
+	self.tex:subimage()
+	self.sceneObj.geometry:draw()
 end
 App():run()
