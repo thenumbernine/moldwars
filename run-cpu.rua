@@ -1,0 +1,112 @@
+#!/usr/bin/env rua
+-- I can't believe how slow this goes in numo9
+local App = require 'glapp':subclass()
+local gl = require 'gl'
+local getTime = require 'ext.timer'.getTime
+local GLTex2D = require 'gl.tex2d'
+local GLSceneObject = require 'gl.sceneobject'
+App.title = 'MoldWars'
+
+
+-- tex and update size:
+local texWidth, texHeight = 256, 256
+App.width = texWidth * 3
+App.height = texHeight * 3
+
+App.initGL = |:|do
+	local len = texWidth * texHeight
+	self.texData = ffi.new('uint32_t[?]', len)
+	for i=0,len-1 do
+		self.texData[i] = math.random(0, 0xffffffff)
+	end
+	self.tex = GLTex2D{
+		width = texWidth,
+		height = texHeight,
+		internalFormat = gl.GL_RGBA,
+		magFilter = gl.GL_NEAREST,
+		minFilter = gl.GL_NEAREST,
+		data = self.texData,
+	}
+	self.sceneObj = GLSceneObject{
+		program = {
+			version = 'latest',
+			precision = 'best',
+			vertexCode = [[
+in vec2 vertex;
+out vec2 tcv;
+void main() {
+	gl_Position = vec4(vertex * 2. - 1., 0., 1.);
+	tcv = vertex;
+}
+]],
+			fragmentCode = [[
+uniform sampler2D tex;
+in vec2 tcv;
+out vec4 fragColor;
+void main() {
+	fragColor = texture(tex, tcv);
+}
+]],
+			uniforms = {
+				tex = 0,
+			},
+		},
+		vertexes = {
+			data = {
+				0, 0,
+				1, 0,
+				0, 1,
+				1, 1,
+			},
+			dim = 2,
+		},
+		geometry = {
+			mode = gl.GL_TRIANGLE_STRIP,
+		},
+	}
+	self.sceneObj.program:use()
+	self.sceneObj.vao:bind()
+end
+
+local lastTime = getTime()
+local fpsFrames = 0
+local fpsSeconds = 0
+local drawsPerSecond = 0
+
+--[[
+while-loop counting 28mil fps cycles/second on a 2.9 GHz means 103 cycles per frame, i.e. frame update takes 3.5e-8 seconds
+empty App.update loop is 13k fps, i.e. 223077 cycles, i.e. frame update takes 7.7e-5 seconds
+App.update + draw without texData-update: 1450 fps, 2000000 cycles, i.e. frame update takes 5e-7 seconds
+App.update + texData-update without draw: 300 fps, 9666667 cycles, i.e. frame update takes 0.003 seconds
+with subimage and draw, 250 fps, i.e. 11600000 cycles, i.e. frame update takes 0.004 seconds
+--]]
+--while true do
+App.update = |:|do
+	local thisTime = getTime()
+	local deltaTime = thisTime - lastTime
+	fpsFrames = fpsFrames + 1
+	fpsSeconds = fpsSeconds + deltaTime
+	if fpsSeconds > 1 then
+		print('FPS: '..(fpsFrames / fpsSeconds))
+		drawsPerSecond = 0
+		fpsFrames = 0
+		fpsSeconds = 0
+	end
+	lastTime = thisTime
+	
+	-- [[
+	local len = texWidth * texHeight
+	for i=0,len-1 do
+		local di = math.random(0,3)
+		di = (bit.band(di, 1) * 2 - 1) * (bit.band(di, 2) == 2 and texWidth or 1)
+		local src = self.texData[(i + di) % len]
+		local r = (src + math.random(0,2)-1) & 0xff
+		local g = (src + ((math.random(0,2)-1) << 8)) & 0xff00
+		local b = (src + ((math.random(0,2)-1) << 16)) & 0xff0000
+		self.texData[i] = r | g | b
+	end
+	--]]
+	self.tex:subimage()
+	self.sceneObj.geometry:draw()
+end
+App():run()
