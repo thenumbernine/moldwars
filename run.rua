@@ -73,6 +73,14 @@ local fpsFrames = 0
 local fpsSeconds = 0
 local drawsPerSecond = 0
 
+--[[
+while-loop counting 28mil fps cycles/second on a 2.9 GHz means 103 cycles per frame, i.e. frame update takes 3.5e-8 seconds
+empty App.update loop is 13k fps, i.e. 223077 cycles, i.e. frame update takes 7.7e-5 seconds
+App.update + draw without texData-update: 1450 fps, 2000000 cycles, i.e. frame update takes 5e-7 seconds
+App.update + texData-update without draw: 300 fps, 9666667 cycles, i.e. frame update takes 0.003 seconds
+with subimage and draw, 250 fps, i.e. 11600000 cycles, i.e. frame update takes 0.004 seconds
+--]]
+--while true do
 App.update = |:|do
 	local thisTime = getTime()
 	local deltaTime = thisTime - lastTime
@@ -85,24 +93,19 @@ App.update = |:|do
 		fpsSeconds = 0
 	end
 	lastTime = thisTime
+	
+	-- [[
 	local len = texWidth * texHeight
 	for i=0,len-1 do
 		local di = math.random(0,3)
-		if di == 0 then
-			di = 1
-		elseif di == 1 then
-			di = -1
-		elseif di == 2 then
-			di = texWidth
-		elseif di == 3 then
-			di = -texWidth
-		end
+		di = (bit.band(di, 1) * 2 - 1) * (bit.band(di, 2) == 2 and texWidth or 1)
 		local src = self.texData[(i + di) % len]
 		local r = (src + math.random(0,2)-1) & 0xff
 		local g = (src + ((math.random(0,2)-1) << 8)) & 0xff00
 		local b = (src + ((math.random(0,2)-1) << 16)) & 0xff0000
 		self.texData[i] = r | g | b
 	end
+	--]]
 	self.tex:subimage()
 	self.sceneObj.geometry:draw()
 end
