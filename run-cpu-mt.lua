@@ -47,6 +47,13 @@ local w = ...
 
 local numThreads = Threads.get_thread_count()
 local threads = Threads.new_pool(worker, numThreads)
+-- provide the work data up front
+for i=1,numThreads do
+	threads:setwork(i, {
+		startRow = math.floor((i-1) / numThreads * texHeight),	-- inclusive
+		endRow = math.floor(i / numThreads * texHeight),		-- exclusive
+	})
+end
 
 App.width = texWidth * 3
 App.height = texHeight * 3
@@ -129,14 +136,9 @@ function App:update()
 		fpsSeconds = 0
 	end
 	lastTime = thisTime
-	
-	threads:submit_all(range(numThreads):mapi(function(i)
-		return {
-			startRow = math.floor((i-1) / numThreads * texHeight),	-- inclusive
-			endRow = math.floor(i / numThreads * texHeight),		-- exclusive
-		}
-	end))
-	threads:wait_all()
+
+	-- issue re-run semaphore each update
+	threads:iterate()
 
 	self.tex:subimage()
 	self.sceneObj.geometry:draw()
