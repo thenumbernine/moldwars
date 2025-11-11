@@ -18,26 +18,23 @@ texData = ffi.new('uint32_t[?]', texelCount)
 
 local worker = load(template([[
 local ffi = require 'ffi'
-local texWidth, texHeight = <?=texWidth?>, <?=texHeight?>
 local texData = ffi.cast('uint32_t*', <?=texData?>)
 local w = ...
-	local startRow = w.startRow
-	local endRow = w.endRow
+local startRow = w.startRow
+local endRow = w.endRow
 
-	local workSize = (endRow - startRow) * texWidth
-	local threadOffset = startRow * texWidth
-	for localIndex = 0,workSize-1 do
-		local i = localIndex + threadOffset
-		local di = math.random(0,3)
-		di = (bit.band(di, 2) - 1) * (bit.band(di, 1) * (texWidth - 1) + 1)
-		local src = texData[(i + di) % <?=texelCount?>]
-		local r = bit.band((src + math.random(0,2) - 1), 0xff)
-		local g = bit.band((src + bit.lshift((math.random(0,2)-1), 8)), 0xff00)
-		local b = bit.band((src + bit.lshift((math.random(0,2)-1), 16)), 0xff0000)
-		texData[i] = bit.bor(r, g, b)
-	end
-
-	return true
+local workSize = (endRow - startRow) * <?=texWidth?>
+local threadOffset = startRow * <?=texWidth?>
+for localIndex = 0,workSize-1 do
+	local i = localIndex + threadOffset
+	local di = math.random(0,3)
+	di = (bit.band(di, 2) - 1) * (bit.band(di, 1) * (<?=texWidth?> - 1) + 1)
+	local src = texData[(i + di) % <?=texelCount?>]
+	local r = bit.band((src + math.random(0,2) - 1), 0xff)
+	local g = bit.band((src + bit.lshift((math.random(0,2)-1), 8)), 0xff00)
+	local b = bit.band((src + bit.lshift((math.random(0,2)-1), 16)), 0xff0000)
+	texData[i] = bit.bor(r, g, b)
+end
 ]], {
 	texWidth = texWidth,
 	texHeight = texHeight,
@@ -46,14 +43,15 @@ local w = ...
 }))
 
 local numThreads = Threads.get_thread_count()
-local threads = Threads.new_pool(worker, numThreads)
+
 -- provide the work data up front
-for i=1,numThreads do
-	threads:setwork(i, {
+local workData = range(numThreads):mapi(function(i)
+	return {
 		startRow = math.floor((i-1) / numThreads * texHeight),	-- inclusive
 		endRow = math.floor(i / numThreads * texHeight),		-- exclusive
-	})
-end
+	}
+end)
+local threads = Threads.new_pool(worker, numThreads, workData)
 
 App.width = texWidth * 3
 App.height = texHeight * 3
