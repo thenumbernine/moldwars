@@ -1,4 +1,7 @@
-#!/usr/bin/env rua
+#!/usr/bin/env luajit
+local ffi = require 'ffi'
+local assert = require 'ext.assert'
+local range = require 'ext.range'
 local Threads = require 'pureffi.threads'
 local App = require 'glapp':subclass()
 local gl = require 'gl'
@@ -7,24 +10,34 @@ local GLTex2D = require 'gl.tex2d'
 local GLSceneObject = require 'gl.sceneobject'
 App.title = 'MoldWars'
 
-local worker = |input|do
-	local startRow = input.startRow
-	local endRow = input.endRow
-	local texWidth = input.texWidth
-	local texHeight = input.texHeight
-	local texData = input.texData
+local numint32perintptr = math.max(1, ffi.sizeof'intptr_t' / ffi.sizeof'int32_t')
+local texDataSep = ffi.new('uint32_t[?]', numint32perintptr)
+assert.eq(numint32perintptr, 2)	-- i'mma hardcode this into worker so I dont have any scope access outside worker
+
+local worker = function(w)
+	local startRow = w.startRow
+	local endRow = w.endRow
+	local texWidth = w.texWidth
+	local texHeight = w.texHeight
+
+	local ffi = require 'ffi'
+	local texDataIntPtr = bit.bor(
+		ffi.cast('intptr_t', w[0]),
+		bit.lshift(ffi.cast('intptr_t', w[1]), 32)
+	)
+	local texData = ffi.cast('uint32_t*', texDataIntPtr)
 
 	local len = texWidth * texHeight
 	for y=startRow,endRow-1 do
 		for x=0,texWidth do
 			local i = x + texWidth * y
 			local di = math.random(0,3)
-			di = (bit.band(di, 1) * 2 - 1) * (bit.band(di, 2) == 2 and texWidth or 1)
+			di = (bit.band(di, 2) - 1) * (bit.band(di, 1) * (texWidth - 1) + 1)
 			local src = texData[(i + di) % len]
-			local r = (src + math.random(0,2)-1) & 0xff
-			local g = (src + ((math.random(0,2)-1) << 8)) & 0xff00
-			local b = (src + ((math.random(0,2)-1) << 16)) & 0xff0000
-			texData[i] = r | g | b
+			local r = bit.band((src + math.random(0,2) - 1), 0xff)
+			local g = bit.band((src + bit.lshift((math.random(0,2)-1), 8)), 0xff00)
+			local b = bit.band((src + bit.lshift((math.random(0,2)-1), 16)), 0xff0000)
+			texData[i] = bit.bor(r, g, b)
 		end
 	end
 
@@ -32,14 +45,14 @@ local worker = |input|do
 end
 
 local numThreads = Threads.get_thread_count()
-local thread_pool = Threads.new_pool(worker, numThreads)
+local threads = Threads.new_pool(worker, numThreads)
 
 -- tex and update size:
 local texWidth, texHeight = 256, 256
 App.width = texWidth * 3
 App.height = texHeight * 3
 
-App.initGL = |:|do
+function App:initGL()
 	local len = texWidth * texHeight
 	self.texData = ffi.new('uint32_t[?]', len)
 	for i=0,len-1 do
@@ -107,7 +120,7 @@ App.update + texData-update without draw: 300 fps, 9666667 cycles, i.e. frame up
 with subimage and draw, 250 fps, i.e. 11600000 cycles, i.e. frame update takes 0.004 seconds
 --]]
 --while true do
-App.update = |:|do
+function App:update()
 	local thisTime = getTime()
 	local deltaTime = thisTime - lastTime
 	fpsFrames = fpsFrames + 1
@@ -120,29 +133,24 @@ App.update = |:|do
 	end
 	lastTime = thisTime
 	
-	--[[
-	local len = texWidth * texHeight
-	for i=0,len-1 do
-		local di = math.random(0,3)
-		di = (bit.band(di, 1) * 2 - 1) * (bit.band(di, 2) == 2 and texWidth or 1)
-		local src = self.texData[(i + di) % len]
-		local r = (src + math.random(0,2)-1) & 0xff
-		local g = (src + ((math.random(0,2)-1) << 8)) & 0xff00
-		local b = (src + ((math.random(0,2)-1) << 16)) & 0xff0000
-		self.texData[i] = r | g | b
-	end
-	--]]
-	
-	thread_pool:submit_all(range(numThreads):mapi(|i| {
-		startRow = math.floor((i-1) / numThreads * texHeight),	-- inclusive
-		endRow = math.floor(i / numThreads * texHeight),		-- exclusive
-		texWidth = texWidth,
-		texHeight = texHeight,
-		texData = ffi.cast('uint32_t*', self.texData),
-	}))
-	local results = thread_pool:wait_all()
+	ffi.cast('intptr_t*', texDataSep)[0] = ffi.cast('intptr_t', ffi.cast('void*', self.texData))
+	threads:submit_all(range(numThreads):mapi(function(i)
+		local w = {
+			startRow = math.floor((i-1) / numThreads * texHeight),	-- inclusive
+			endRow = math.floor(i / numThreads * texHeight),		-- exclusive
+			texWidth = texWidth,
+			texHeight = texHeight,
+			--texData = ffi.cast('uint32_t*', self.texData),
+		}
+		for i=0,numint32perintptr-1 do
+			w[i] = texDataSep[i]
+		end
+		return w
+	end))
+	threads:wait_all()
 
 	self.tex:subimage()
 	self.sceneObj.geometry:draw()
 end
 App():run()
+threads:shutdown()

@@ -98,7 +98,7 @@ App.update = |:|do
 	local len = texWidth * texHeight
 	for i=0,len-1 do
 		local di = math.random(0,3)
-		di = (bit.band(di, 1) * 2 - 1) * (bit.band(di, 2) == 2 and texWidth or 1)
+		di = ((di & 2) - 1) * ((di & 1) * (texWidth - 1) + 1)
 		local src = self.texData[(i + di) % len]
 		local r = (src + math.random(0,2)-1) & 0xff
 		local g = (src + ((math.random(0,2)-1) << 8)) & 0xff00
