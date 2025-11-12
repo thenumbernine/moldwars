@@ -3,27 +3,19 @@ local ffi = require 'ffi'
 local template = require 'template'
 local assert = require 'ext.assert'
 local range = require 'ext.range'
-local App = require 'glapp':subclass()
 local gl = require 'gl'
 local getTime = require 'ext.timer'.getTime
 local GLTex2D = require 'gl.tex2d'
 local GLSceneObject = require 'gl.sceneobject'
-App.title = 'MoldWars'
+
+local Thread = require 'thread'
+local numThreads = Thread.numThreads()
+require 'ffi.req' 'c.semaphore'	-- sem_t
 
 -- tex and update size:
 local texWidth, texHeight = 256, 256
 local texelCount = texWidth * texHeight
 texData = ffi.new('uint32_t[?]', texelCount)
-
---[[
-local Threads = require 'pureffi.threads'
-local numThreads = Threads.get_thread_count()
---]]
--- [[
-local Thread = require 'thread'
-local numThreads = Thread.numThreads()
-require 'ffi.req' 'c.semaphore'	-- sem_t
---]]
 
 -- save code separately so the threads can cdef this too
 local threadArgTypeCode = [[
@@ -35,50 +27,13 @@ typedef struct ThreadArg {
 ]]
 ffi.cdef(threadArgTypeCode)
 
-local threadArgs = ffi.new('ThreadArg[?]', numThreads)
-
---[==[
-local worker = load(template([[
-local ffi = require 'ffi'
-local texData = ffi.cast('uint32_t*', <?=texData?>)
-local w = ...
-local startRow = w.startRow
-local endRow = w.endRow
-
-local workSize = (endRow - startRow) * <?=texWidth?>
-local threadOffset = startRow * <?=texWidth?>
-for localIndex = 0,workSize-1 do
-	local i = localIndex + threadOffset
-	local di = math.random(0,3)
-	di = (bit.band(di, 2) - 1) * (bit.band(di, 1) * (<?=texWidth?> - 1) + 1)
-	local src = texData[(i + di) % <?=texelCount?>]
-	local r = bit.band((src + math.random(0,2) - 1), 0xff)
-	local g = bit.band((src + bit.lshift((math.random(0,2)-1), 8)), 0xff00)
-	local b = bit.band((src + bit.lshift((math.random(0,2)-1), 16)), 0xff0000)
-	texData[i] = bit.bor(r, g, b)
-end
-]], {
-	texWidth = texWidth,
-	texHeight = texHeight,
-	texelCount = texelCount,
-	texData = tostring(ffi.cast('uintptr_t', ffi.cast('void*', texData))), 
-}))
-local workData = range(numThreads):mapi(function(i)
-	return {
-		startRow = math.floor((i-1) / numThreads * texHeight),	-- inclusive
-		endRow = math.floor(i / numThreads * texHeight),		-- exclusive
-	}
-end)
-local threads = Threads.new_pool(worker, numThreads, workData)
---]==]
--- [[
 local threads = range(0,numThreads-1):mapi(function(i)
-	local threadArg = threadArgs + i
-	threadArg.done = false
+	local arg = ffi.new'ThreadArg'
+	arg.done = false
 
 	-- init our semaphores
-	ffi.C.sem_init(threadArg.semWorkReady, 0, 0)
-	ffi.C.sem_init(threadArg.semWorkDone, 0, 0)
+	ffi.C.sem_init(arg.semWorkReady, 0, 0)
+	ffi.C.sem_init(arg.semWorkDone, 0, 0)
 
 	return Thread(
 		-- thread code:
@@ -131,11 +86,14 @@ end
 			startRow = math.floor(i / numThreads * texHeight),		-- inclusive
 			endRow = math.floor((i+1) / numThreads * texHeight),	-- exclusive
 		}),
-		-- thread arg
-		threadArg
+		-- thread arg.  saved as thread.arg
+		arg
 	)
 end)
---]]
+
+
+local App = require 'glapp':subclass()
+App.title = 'MoldWars'
 
 App.width = texWidth * 3
 App.height = texHeight * 3
@@ -219,10 +177,7 @@ function App:update()
 	end
 	lastTime = thisTime
 
-	--[[ issue re-run semaphore each update
-	threads:iterate()
-	--]]
-	-- [[
+	-- [[ issue re-run semaphore each update
 	for _,th in ipairs(threads) do
 		ffi.C.sem_post(th.arg.semWorkReady)
 	end
@@ -235,10 +190,8 @@ function App:update()
 	self.sceneObj.geometry:draw()
 end
 App():run()
---[[
-threads:shutdown()
---]]
--- [[
+
+-- [[ shutdown threadpool
 for _,thread in ipairs(threads) do
 	local arg = thread.arg
 	-- set thread done flag
