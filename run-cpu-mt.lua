@@ -3,7 +3,6 @@ local ffi = require 'ffi'
 local template = require 'template'
 local assert = require 'ext.assert'
 local range = require 'ext.range'
-local Threads = require 'pureffi.threads'
 local App = require 'glapp':subclass()
 local gl = require 'gl'
 local getTime = require 'ext.timer'.getTime
@@ -16,6 +15,29 @@ local texWidth, texHeight = 256, 256
 local texelCount = texWidth * texHeight
 texData = ffi.new('uint32_t[?]', texelCount)
 
+--[[
+local Threads = require 'pureffi.threads'
+local numThreads = Threads.get_thread_count()
+--]]
+-- [[
+local Thread = require 'thread'
+local numThreads = Thread.numThreads()
+require 'ffi.req' 'c.semaphore'	-- sem_t
+--]]
+
+-- save code separately so the threads can cdef this too
+local threadArgTypeCode = [[
+typedef struct ThreadArg {
+	sem_t semWorkReady;
+	sem_t semWorkDone;
+	volatile bool done;
+} ThreadArg;
+]]
+ffi.cdef(threadArgTypeCode)
+
+local threadArgs = ffi.new('ThreadArg[?]', numThreads)
+
+--[==[
 local worker = load(template([[
 local ffi = require 'ffi'
 local texData = ffi.cast('uint32_t*', <?=texData?>)
@@ -41,10 +63,6 @@ end
 	texelCount = texelCount,
 	texData = tostring(ffi.cast('uintptr_t', ffi.cast('void*', texData))), 
 }))
-
-local numThreads = Threads.get_thread_count()
-
--- provide the work data up front
 local workData = range(numThreads):mapi(function(i)
 	return {
 		startRow = math.floor((i-1) / numThreads * texHeight),	-- inclusive
@@ -52,6 +70,72 @@ local workData = range(numThreads):mapi(function(i)
 	}
 end)
 local threads = Threads.new_pool(worker, numThreads, workData)
+--]==]
+-- [[
+local threads = range(0,numThreads-1):mapi(function(i)
+	local threadArg = threadArgs + i
+	threadArg.done = false
+
+	-- init our semaphores
+	ffi.C.sem_init(threadArg.semWorkReady, 0, 0)
+	ffi.C.sem_init(threadArg.semWorkDone, 0, 0)
+
+	return Thread(
+		-- thread code:
+		-- TODO TODO TODO
+		-- in lua-lua, change the pcalls to use error handlers, AND REPORT THE ERRORS
+		template([===[
+local ffi = require 'ffi'
+local assert = require 'ext.assert'
+
+-- will ffi.C carry across? 
+-- because its the same luajit process?
+-- nope, ffi.C is unique per lua-state
+require 'ffi.req' 'c.semaphore'	-- sem_t
+ffi.cdef[[<?=threadArgTypeCode?>]]
+
+local texData = ffi.cast('uint32_t*', <?=texData?>)
+local startRow = <?=startRow?>
+local endRow = <?=endRow?>
+
+-- holds semaphores etc of the thread
+assert(arg, 'expected thread argument')
+assert.type(arg, 'cdata')
+arg = ffi.cast('ThreadArg*', arg)
+
+ffi.C.sem_wait(arg.semWorkReady)
+while not arg.done do
+	-- run the worker body:
+	local workSize = (endRow - startRow) * <?=texWidth?>
+	local threadOffset = startRow * <?=texWidth?>
+	for localIndex = 0,workSize-1 do
+		local i = localIndex + threadOffset
+		local di = math.random(0,3)
+		di = (bit.band(di, 2) - 1) * (bit.band(di, 1) * (<?=texWidth?> - 1) + 1)
+		local src = texData[(i + di) % <?=texelCount?>]
+		local r = bit.band((src + math.random(0,2) - 1), 0xff)
+		local g = bit.band((src + bit.lshift((math.random(0,2)-1), 8)), 0xff00)
+		local b = bit.band((src + bit.lshift((math.random(0,2)-1), 16)), 0xff0000)
+		texData[i] = bit.bor(r, g, b)
+	end
+
+	ffi.C.sem_post(arg.semWorkDone)
+	ffi.C.sem_wait(arg.semWorkReady)
+end
+]===], 	{
+			texWidth = texWidth,
+			texHeight = texHeight,
+			texelCount = texelCount,
+			threadArgTypeCode = threadArgTypeCode,
+			texData = tostring(ffi.cast('uintptr_t', ffi.cast('void*', texData))), 
+			startRow = math.floor(i / numThreads * texHeight),		-- inclusive
+			endRow = math.floor((i+1) / numThreads * texHeight),	-- exclusive
+		}),
+		-- thread arg
+		threadArg
+	)
+end)
+--]]
 
 App.width = texWidth * 3
 App.height = texHeight * 3
@@ -135,11 +219,38 @@ function App:update()
 	end
 	lastTime = thisTime
 
-	-- issue re-run semaphore each update
+	--[[ issue re-run semaphore each update
 	threads:iterate()
+	--]]
+	-- [[
+	for _,th in ipairs(threads) do
+		ffi.C.sem_post(th.arg.semWorkReady)
+	end
+	for _,th in ipairs(threads) do
+		ffi.C.sem_wait(th.arg.semWorkDone)
+	end
+	--]]
 
 	self.tex:subimage()
 	self.sceneObj.geometry:draw()
 end
 App():run()
+--[[
 threads:shutdown()
+--]]
+-- [[
+for _,thread in ipairs(threads) do
+	local arg = thread.arg
+	-- set thread done flag
+	arg.done = true
+	-- wake it up so it can break and return
+	ffi.C.sem_post(arg.semWorkReady)
+	-- join <-> wait for it to return
+	thread:join()
+	-- destroy semaphores
+	ffi.C.sem_destroy(arg.semWorkReady)
+	ffi.C.sem_destroy(arg.semWorkDone)
+	-- destroy thread
+	thread:close()
+end
+--]]
