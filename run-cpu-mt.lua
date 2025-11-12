@@ -8,62 +8,19 @@ local getTime = require 'ext.timer'.getTime
 local GLTex2D = require 'gl.tex2d'
 local GLSceneObject = require 'gl.sceneobject'
 
-local Thread = require 'thread'
-local numThreads = Thread.numThreads()
-local Semaphore = require 'thread.semaphore'
+local ThreadPool = require 'thread.pool'
 
 -- tex and update size:
 local texWidth, texHeight = 256, 256
 local texelCount = texWidth * texHeight
 texData = ffi.new('uint32_t[?]', texelCount)
 
--- save code separately so the threads can cdef this too
-local threadArgTypeCode = [[
-typedef struct ThreadArg {
-	sem_t *semReady;
-	sem_t *semDone;
-	volatile bool done;
-} ThreadArg;
-]]
-ffi.cdef(threadArgTypeCode)
-
-local workers = range(0,numThreads-1):mapi(function(i)
-	local worker = {}
-	worker.semReady = Semaphore()
-	worker.semDone = Semaphore()
-
-	local arg = ffi.new'ThreadArg'
-	worker.arg = arg
-	arg.done = false
-	arg.semReady = worker.semReady.id
-	arg.semDone = worker.semDone.id
-
-	worker.thread = Thread(
-		-- thread code:
-		-- TODO TODO TODO
-		-- in lua-lua, change the pcalls to use error handlers, AND REPORT THE ERRORS
-		template([===[
-local ffi = require 'ffi'
-local assert = require 'ext.assert'
-local Semaphore = require 'thread.semaphore'
-
--- will ffi.C carry across? 
--- because its the same luajit process?
--- nope, ffi.C is unique per lua-state
-ffi.cdef[[<?=threadArgTypeCode?>]]
-
+local pool = ThreadPool{
+	code = function(pool, i)
+		return template([===[
 local texData = ffi.cast('uint32_t*', <?=texData?>)
 local startRow = <?=startRow?>
 local endRow = <?=endRow?>
-
--- holds semaphores etc of the thread
-assert(arg, 'expected thread argument')
-assert.type(arg, 'cdata')
-arg = ffi.cast('ThreadArg*', arg)
-
--- convert our sem_t* to our Semaphore.id.  (By default its sem_t[1], but sem_t* is interchangeable.)
-local semReady = setmetatable({id=arg.semReady}, Semaphore)
-local semDone = setmetatable({id=arg.semDone}, Semaphore)
 
 semReady:wait()
 while not arg.done do
@@ -88,18 +45,12 @@ end
 			texWidth = texWidth,
 			texHeight = texHeight,
 			texelCount = texelCount,
-			threadArgTypeCode = threadArgTypeCode,
 			texData = tostring(ffi.cast('uintptr_t', ffi.cast('void*', texData))), 
-			startRow = math.floor(i / numThreads * texHeight),		-- inclusive
-			endRow = math.floor((i+1) / numThreads * texHeight),	-- exclusive
-		}),
-		-- thread arg.  saved as thread.arg
-		arg
-	)
-
-	return worker
-end)
-
+			startRow = math.floor(i / pool.size * texHeight),		-- inclusive
+			endRow = math.floor((i+1) / pool.size * texHeight),	-- exclusive
+		})
+	end,
+}
 
 local App = require 'glapp':subclass()
 App.title = 'MoldWars'
@@ -186,33 +137,10 @@ function App:update()
 	end
 	lastTime = thisTime
 
-	-- [[ issue re-run semaphore each update
-	for _,worker in ipairs(workers) do
-		worker.semReady:post()
-	end
-	for _,worker in ipairs(workers) do
-		worker.semDone:wait()
-	end
-	--]]
+	pool:cycle()
 
 	self.tex:subimage()
 	self.sceneObj.geometry:draw()
 end
 App():run()
-
--- [[ shutdown threadpool
-for _,worker in ipairs(workers) do
-	local arg = worker.arg
-	-- set thread done flag
-	arg.done = true
-	-- wake it up so it can break and return
-	worker.semReady:post()
-	-- join <-> wait for it to return
-	worker.thread:join()
-	-- destroy semaphores
-	worker.semReady:destroy()
-	worker.semDone:destroy()
-	-- destroy thread Lua state:
-	worker.thread:close()
-end
---]]
+pool:closed()
