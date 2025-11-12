@@ -24,6 +24,7 @@ local endRow = <?=endRow?>
 
 semReady:wait()
 while not arg.done do
+
 	-- run the worker body:
 	local workSize = (endRow - startRow) * <?=texWidth?>
 	local threadOffset = startRow * <?=texWidth?>
@@ -116,14 +117,6 @@ local fpsFrames = 0
 local fpsSeconds = 0
 local drawsPerSecond = 0
 
---[[
-while-loop counting 28mil fps cycles/second on a 2.9 GHz means 103 cycles per frame, i.e. frame update takes 3.5e-8 seconds
-empty App.update loop is 13k fps, i.e. 223077 cycles, i.e. frame update takes 7.7e-5 seconds
-App.update + draw without texData-update: 1450 fps, 2000000 cycles, i.e. frame update takes 5e-7 seconds
-App.update + texData-update without draw: 300 fps, 9666667 cycles, i.e. frame update takes 0.003 seconds
-with subimage and draw, 250 fps, i.e. 11600000 cycles, i.e. frame update takes 0.004 seconds
---]]
---while true do
 function App:update()
 	local thisTime = getTime()
 	local deltaTime = thisTime - lastTime
