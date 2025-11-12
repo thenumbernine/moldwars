@@ -10,7 +10,7 @@ local GLSceneObject = require 'gl.sceneobject'
 
 local Thread = require 'thread'
 local numThreads = Thread.numThreads()
-require 'ffi.req' 'c.semaphore'	-- sem_t
+local Semaphore = require 'thread.semaphore'
 
 -- tex and update size:
 local texWidth, texHeight = 256, 256
@@ -20,33 +20,36 @@ texData = ffi.new('uint32_t[?]', texelCount)
 -- save code separately so the threads can cdef this too
 local threadArgTypeCode = [[
 typedef struct ThreadArg {
-	sem_t semWorkReady;
-	sem_t semWorkDone;
+	sem_t *semReady;
+	sem_t *semDone;
 	volatile bool done;
 } ThreadArg;
 ]]
 ffi.cdef(threadArgTypeCode)
 
-local threads = range(0,numThreads-1):mapi(function(i)
+local workers = range(0,numThreads-1):mapi(function(i)
+	local worker = {}
+	worker.semReady = Semaphore()
+	worker.semDone = Semaphore()
+
 	local arg = ffi.new'ThreadArg'
+	worker.arg = arg
 	arg.done = false
+	arg.semReady = worker.semReady.id
+	arg.semDone = worker.semDone.id
 
-	-- init our semaphores
-	ffi.C.sem_init(arg.semWorkReady, 0, 0)
-	ffi.C.sem_init(arg.semWorkDone, 0, 0)
-
-	return Thread(
+	worker.thread = Thread(
 		-- thread code:
 		-- TODO TODO TODO
 		-- in lua-lua, change the pcalls to use error handlers, AND REPORT THE ERRORS
 		template([===[
 local ffi = require 'ffi'
 local assert = require 'ext.assert'
+local Semaphore = require 'thread.semaphore'
 
 -- will ffi.C carry across? 
 -- because its the same luajit process?
 -- nope, ffi.C is unique per lua-state
-require 'ffi.req' 'c.semaphore'	-- sem_t
 ffi.cdef[[<?=threadArgTypeCode?>]]
 
 local texData = ffi.cast('uint32_t*', <?=texData?>)
@@ -58,7 +61,11 @@ assert(arg, 'expected thread argument')
 assert.type(arg, 'cdata')
 arg = ffi.cast('ThreadArg*', arg)
 
-ffi.C.sem_wait(arg.semWorkReady)
+-- convert our sem_t* to our Semaphore.id.  (By default its sem_t[1], but sem_t* is interchangeable.)
+local semReady = setmetatable({id=arg.semReady}, Semaphore)
+local semDone = setmetatable({id=arg.semDone}, Semaphore)
+
+semReady:wait()
 while not arg.done do
 	-- run the worker body:
 	local workSize = (endRow - startRow) * <?=texWidth?>
@@ -74,8 +81,8 @@ while not arg.done do
 		texData[i] = bit.bor(r, g, b)
 	end
 
-	ffi.C.sem_post(arg.semWorkDone)
-	ffi.C.sem_wait(arg.semWorkReady)
+	semDone:post()
+	semReady:wait()
 end
 ]===], 	{
 			texWidth = texWidth,
@@ -89,6 +96,8 @@ end
 		-- thread arg.  saved as thread.arg
 		arg
 	)
+
+	return worker
 end)
 
 
@@ -178,11 +187,11 @@ function App:update()
 	lastTime = thisTime
 
 	-- [[ issue re-run semaphore each update
-	for _,th in ipairs(threads) do
-		ffi.C.sem_post(th.arg.semWorkReady)
+	for _,worker in ipairs(workers) do
+		worker.semReady:post()
 	end
-	for _,th in ipairs(threads) do
-		ffi.C.sem_wait(th.arg.semWorkDone)
+	for _,worker in ipairs(workers) do
+		worker.semDone:wait()
 	end
 	--]]
 
@@ -192,18 +201,18 @@ end
 App():run()
 
 -- [[ shutdown threadpool
-for _,thread in ipairs(threads) do
-	local arg = thread.arg
+for _,worker in ipairs(workers) do
+	local arg = worker.arg
 	-- set thread done flag
 	arg.done = true
 	-- wake it up so it can break and return
-	ffi.C.sem_post(arg.semWorkReady)
+	worker.semReady:post()
 	-- join <-> wait for it to return
-	thread:join()
+	worker.thread:join()
 	-- destroy semaphores
-	ffi.C.sem_destroy(arg.semWorkReady)
-	ffi.C.sem_destroy(arg.semWorkDone)
-	-- destroy thread
-	thread:close()
+	worker.semReady:destroy()
+	worker.semDone:destroy()
+	-- destroy thread Lua state:
+	worker.thread:close()
 end
 --]]
