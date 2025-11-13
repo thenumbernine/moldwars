@@ -29,10 +29,10 @@ local texData = ffi.cast('uint32_t*', <?=texData?>)
 		local startRow = math.floor(i / pool.size * texHeight)		-- inclusive
 		local endRow = math.floor((i+1) / pool.size * texHeight)	-- exclusive
 		local workSize = (endRow - startRow) * texWidth
+		local threadOffset = startRow * texWidth
 		return template([===[
-local threadOffset = <?=startRow?> * <?=texWidth?>
 for localIndex = 0,<?=workSize?>-1 do
-	local i = localIndex + threadOffset
+	local i = <?=threadOffset?> + localIndex
 	local di = math.random(0,3)
 	di = (bit.band(di, 2) - 1) * (bit.band(di, 1) * (<?=texWidth?> - 1) + 1)
 	local src = texData[(i + di) % <?=texelCount?>]
@@ -44,8 +44,8 @@ end
 ]===], 	{
 			texWidth = texWidth,
 			texelCount = texelCount,
-			startRow = startRow,
 			workSize = workSize,
+			threadOffset = threadOffset,
 		})
 	end,
 }
