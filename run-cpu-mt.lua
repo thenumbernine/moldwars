@@ -16,39 +16,36 @@ local texelCount = texWidth * texHeight
 texData = ffi.new('uint32_t[?]', texelCount)
 
 local pool = ThreadPool{
-	code = function(pool, i)
+	-- worker init:
+	initcode = function(pool, i)
 		return template([===[
 local texData = ffi.cast('uint32_t*', <?=texData?>)
-local startRow = <?=startRow?>
-local endRow = <?=endRow?>
-
-semReady:wait()
-while not arg.done do
-
-	-- run the worker body:
-	local workSize = (endRow - startRow) * <?=texWidth?>
-	local threadOffset = startRow * <?=texWidth?>
-	for localIndex = 0,workSize-1 do
-		local i = localIndex + threadOffset
-		local di = math.random(0,3)
-		di = (bit.band(di, 2) - 1) * (bit.band(di, 1) * (<?=texWidth?> - 1) + 1)
-		local src = texData[(i + di) % <?=texelCount?>]
-		local r = bit.band((src + math.random(0,2) - 1), 0xff)
-		local g = bit.band((src + bit.lshift((math.random(0,2)-1), 8)), 0xff00)
-		local b = bit.band((src + bit.lshift((math.random(0,2)-1), 16)), 0xff0000)
-		texData[i] = bit.bor(r, g, b)
-	end
-
-	semDone:post()
-	semReady:wait()
+]===],	{
+			texData = tostring(ffi.cast('uintptr_t', ffi.cast('void*', texData))), 
+		})
+	end,
+	-- worker body:
+	code = function(pool, i)
+		local startRow = math.floor(i / pool.size * texHeight)		-- inclusive
+		local endRow = math.floor((i+1) / pool.size * texHeight)	-- exclusive
+		local workSize = (endRow - startRow) * texWidth
+		return template([===[
+local threadOffset = <?=startRow?> * <?=texWidth?>
+for localIndex = 0,<?=workSize?>-1 do
+	local i = localIndex + threadOffset
+	local di = math.random(0,3)
+	di = (bit.band(di, 2) - 1) * (bit.band(di, 1) * (<?=texWidth?> - 1) + 1)
+	local src = texData[(i + di) % <?=texelCount?>]
+	local r = bit.band((src + math.random(0,2) - 1), 0xff)
+	local g = bit.band((src + bit.lshift((math.random(0,2)-1), 8)), 0xff00)
+	local b = bit.band((src + bit.lshift((math.random(0,2)-1), 16)), 0xff0000)
+	texData[i] = bit.bor(r, g, b)
 end
 ]===], 	{
 			texWidth = texWidth,
-			texHeight = texHeight,
 			texelCount = texelCount,
-			texData = tostring(ffi.cast('uintptr_t', ffi.cast('void*', texData))), 
-			startRow = math.floor(i / pool.size * texHeight),		-- inclusive
-			endRow = math.floor((i+1) / pool.size * texHeight),	-- exclusive
+			startRow = startRow,
+			workSize = workSize,
 		})
 	end,
 }
