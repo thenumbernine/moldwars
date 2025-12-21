@@ -7,7 +7,7 @@ local GLTex2D = require 'gl.tex2d'
 local GLPingPong = require 'gl.pingpong'
 local GLSceneObject = require 'gl.sceneobject'
 local GLGeometry = require 'gl.geometry'
-local GLFBO = require 'gl.fbo'
+local GLFramebuffer = require 'gl.framebuffer'
 
 local App = require 'glapp':subclass()
 
@@ -148,7 +148,7 @@ void main() {
 		geometry = self.geometry,
 	}
 
-	self.fbo = GLFBO{
+	self.fbo = GLFramebuffer{
 		dest = self.tex:cur(),
 	}:unbind()
 end
