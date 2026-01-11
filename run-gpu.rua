@@ -29,7 +29,7 @@ App.initGL = |:|do
 		numBuffers = 2,	-- works with 1 or 2 buffers
 		width = texWidth,
 		height = texHeight,
-		internalFormat = gl.GL_RGBA,
+		internalFormat = gl.GL_RGBA8UI,
 		magFilter = gl.GL_NEAREST,
 		minFilter = gl.GL_NEAREST,
 		wrap = {
@@ -63,11 +63,11 @@ void main() {
 }
 ]],
 			fragmentCode = [[
-uniform sampler2D tex;
+uniform usampler2D tex;
 in vec2 tcv;
 out vec4 fragColor;
 void main() {
-	fragColor = texture(tex, tcv, 0);
+	fragColor = (1./255.) * vec4(texture(tex, tcv, 0));
 }
 ]],
 			uniforms = {
@@ -85,17 +85,14 @@ void main() {
 			precision = 'best',
 			vertexCode = [[
 in vec2 vertex;
-out vec2 tcv;
 void main() {
 	gl_Position = vec4(vertex * 2. - 1., 0., 1.);
-	tcv = vertex;
 }
 ]],
 			fragmentCode = template([[
-uniform sampler2D tex;
+uniform usampler2D tex;
 uniform vec3 noiseOfs;
-in vec2 tcv;
-out vec4 fragColor;
+out uvec4 fragColor;
 
 // https://stackoverflow.com/a/34223787
 float random(vec2 st) {
@@ -103,33 +100,43 @@ float random(vec2 st) {
 }
 
 void main() {
-	int noise = int(255. * (random(noiseOfs.xy + tcv) + noiseOfs.z - 1.));
-	vec2 tcsrc = tcv;
-	if ((noise & 2) == 0) {
-		if ((noise & 1) == 0) {
-			tcsrc.x += <?=1/texWidth?>;
+	// TODO better randomization
+	uint noise = uint(63. * (random(noiseOfs.xy + vec2(gl_FragCoord.xy) / textureSize(tex, 0)) + noiseOfs.z - 1.));
+	ivec2 itc = ivec2(gl_FragCoord);
+	if ((noise & 2u) == 0u) {
+		if ((noise & 1u) == 0u) {
+			itc.x++;
 		} else {
-			tcsrc.x -= <?=1/texWidth?>;
+			itc.x--;
 		}
+		itc.x %= <?=texWidth?>;
+		itc.x += <?=texWidth?>;
+		itc.x %= <?=texWidth?>;
 	} else {
-		if ((noise & 1) == 0) {
-			tcsrc.y += <?=1/texHeight?>;
+		if ((noise & 1u) == 0u) {
+			itc.y++;
 		} else {
-			tcsrc.y -= <?=1/texHeight?>;
+			itc.y--;
 		}
+		itc.y %= <?=texHeight?>;
+		itc.y += <?=texHeight?>;
+		itc.y %= <?=texHeight?>;
 	}
-	fragColor = texture(tex, tcsrc, 0);
+	fragColor = texelFetch(tex, itc, 0);
 
 	// now we need 3x 3 random variables = random # from 0-26
 	// x our 4 above = 108 total, so we aren't passing 127 let alone 255
-	int rch = noise >> 2;
-	fragColor.r += float((rch % 3) - 1) / 256.;
-	rch /= 3;
-	fragColor.g += float((rch % 3) - 1) / 256.;
-	rch /= 3;
-	fragColor.b += float((rch % 3) - 1) / 256.;
+	uint rch = noise >> 2u;
+	fragColor.r += (rch % 3u) - 1u;
+	fragColor.r &= 0xFFu;
+	rch /= 3u;
+	fragColor.g += (rch % 3u) - 1u;
+	fragColor.g &= 0xFFu;
+	rch /= 3u;
+	fragColor.b += (rch % 3u) - 1u;
+	fragColor.b &= 0xFFu;
 	//fragColor.a += r3-1
-	fragColor = mod(fragColor, vec4(1., 1., 1., 1.));
+	//fragColor.a &= 0xFF;
 }
 ]], {
 	texWidth = texWidth,
