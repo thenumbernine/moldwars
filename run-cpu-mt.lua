@@ -17,12 +17,15 @@ texData = ffi.new('uint32_t[?]', texelCount)
 
 local pool = ThreadPool{
 	-- worker init:
+	threadInit = function(thread)
+		local WG = thread.lua.global
+		WG.texData = tostring(ffi.cast('uintptr_t', ffi.cast('void*', texData)))
+	end,
 	initcode = function(pool, i)
-		return template([===[
-local texData = ffi.cast('uint32_t*', <?=texData?>)
-]===],	{
-			texData = tostring(ffi.cast('uintptr_t', ffi.cast('void*', texData))), 
-		})
+		return [[
+local fromlua = require 'ext.fromlua'
+texData = ffi.cast('uint32_t*', fromlua(texData))
+]]
 	end,
 	-- worker body:
 	code = function(pool, i)
@@ -134,3 +137,4 @@ function App:update()
 end
 App():run()
 pool:closed()
+pool:showErrs()
