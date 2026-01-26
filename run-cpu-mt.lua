@@ -16,12 +16,8 @@ texData = ffi.new('uint32_t[?]', texelCount)
 local pool = ThreadPool{
 	-- worker init:
 	threadInit = function(thread)
-		local WG = thread.lua.global
-		WG.texData = texData
+		thread.lua.global.texData = texData+0	-- convert to pointer first
 	end,
-	initcode = [[
-texData = ffi.cast('uint32_t*', texData)
-]],
 	-- worker body:
 	code = function(pool, i)
 		local startRow = math.floor(i / pool.size * texHeight)		-- inclusive
