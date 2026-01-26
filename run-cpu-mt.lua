@@ -19,11 +19,9 @@ local pool = ThreadPool{
 		local WG = thread.lua.global
 		WG.texData = texData
 	end,
-	initcode = function(pool, i)
-		return [[
+	initcode = [[
 texData = ffi.cast('uint32_t*', texData)
-]]
-	end,
+]],
 	-- worker body:
 	code = function(pool, i)
 		local startRow = math.floor(i / pool.size * texHeight)		-- inclusive

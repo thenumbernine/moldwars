@@ -13,12 +13,13 @@ texData = ffi.new('uint32_t[?]', texelCount)
 
 local pool = ThreadPool{
 	-- worker init:
-	initcode = |pool, i|
-		template([===[
-local texData = ffi.cast('uint32_t*', <?=texData?>)
-]===],	{
-			texData = tostring(ffi.cast('uintptr_t', ffi.cast('void*', texData))), 
-		}),
+	threadInit = |thread|do
+		local WG = thread.lua.global
+		WG.texData = texData
+	end,
+	initcode = [[
+texData = ffi.cast('uint32_t*', texData)
+]],
 	-- worker body:
 	code = |pool, i| do
 		local startRow = math.floor(i / pool.size * texHeight)		-- inclusive
@@ -129,3 +130,4 @@ App.update = |:|do
 end
 App():run()
 pool:closed()
+pool:showErrs()
