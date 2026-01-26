@@ -1,8 +1,6 @@
 #!/usr/bin/env luajit
 local ffi = require 'ffi'
 local template = require 'template'
-local assert = require 'ext.assert'
-local range = require 'ext.range'
 local gl = require 'gl'
 local getTime = require 'ext.timer'.getTime
 local GLTex2D = require 'gl.tex2d'
@@ -19,12 +17,11 @@ local pool = ThreadPool{
 	-- worker init:
 	threadInit = function(thread)
 		local WG = thread.lua.global
-		WG.texData = tostring(ffi.cast('uintptr_t', ffi.cast('void*', texData)))
+		WG.texData = texData
 	end,
 	initcode = function(pool, i)
 		return [[
-local fromlua = require 'ext.fromlua'
-texData = ffi.cast('uint32_t*', fromlua(texData))
+texData = ffi.cast('uint32_t*', texData)
 ]]
 	end,
 	-- worker body:
