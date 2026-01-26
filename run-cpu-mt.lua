@@ -14,6 +14,7 @@ local texelCount = texWidth * texHeight
 texData = ffi.new('uint32_t[?]', texelCount)
 
 local pool = ThreadPool{
+-- [===[ with inline templates ...
 	-- worker init:
 	threadInit = function(thread)
 		thread.lua.global.texData = texData+0	-- convert to pointer first
@@ -24,24 +25,55 @@ local pool = ThreadPool{
 		local endRow = math.floor((i+1) / pool.size * texHeight)	-- exclusive
 		local workSize = (endRow - startRow) * texWidth
 		local threadOffset = startRow * texWidth
-		return template([===[
+		return template([==[
 for localIndex = 0,<?=workSize?>-1 do
 	local i = <?=threadOffset?> + localIndex
 	local di = math.random(0,3)
 	di = (bit.band(di, 2) - 1) * (bit.band(di, 1) * (<?=texWidth?> - 1) + 1)
 	local src = texData[(i + di) % <?=texelCount?>]
-	local r = bit.band((src + math.random(0,2) - 1), 0xff)
-	local g = bit.band((src + bit.lshift((math.random(0,2)-1), 8)), 0xff00)
-	local b = bit.band((src + bit.lshift((math.random(0,2)-1), 16)), 0xff0000)
+	local r = bit.band(src + math.random(0,2) - 1, 0xff)
+	local g = bit.band(src + bit.lshift((math.random(0,2)-1), 8), 0xff00)
+	local b = bit.band(src + bit.lshift((math.random(0,2)-1), 16), 0xff0000)
 	texData[i] = bit.bor(r, g, b)
 end
-]===], 	{
+]==], 	{
 			texWidth = texWidth,
 			texelCount = texelCount,
 			workSize = workSize,
 			threadOffset = threadOffset,
 		})
 	end,
+--]===]
+--[===[ without templates runs half the speed...
+	-- worker init:
+	threadInit = function(thread)
+		local WG = thread.lua.global
+		WG.texData = texData+0	-- convert to pointer first
+		WG.texWidth = texWidth
+		WG.texHeight = texHeight
+		WG.texelCount = texelCount
+	end,
+	-- worker body:
+	-- the thread pool task index and thread index aren't guaranteed to match
+	code = function(pool, i)
+		return [[
+local startRow = math.floor(tonumber(pool.taskIndex / 4 * texHeight))		-- inclusive
+local endRow = math.floor(tonumber((pool.taskIndex+1) / 4 * texHeight))	-- exclusive
+local workSize = (endRow - startRow) * texWidth
+local threadOffset = startRow * texWidth
+for localIndex = 0,workSize-1 do
+	local i = threadOffset + localIndex
+	local di = math.random(0,3)
+	di = (bit.band(di, 2) - 1) * (bit.band(di, 1) * (texWidth - 1) + 1)
+	local src = texData[(i + di) % texelCount]
+	local r = bit.band((src + math.random(0,2) - 1), 0xff)
+	local g = bit.band((src + bit.lshift((math.random(0,2)-1), 8)), 0xff00)
+	local b = bit.band((src + bit.lshift((math.random(0,2)-1), 16)), 0xff0000)
+	texData[i] = bit.bor(r, g, b)
+end
+]]
+	end,
+--]===]
 }
 
 local App = require 'glapp':subclass()
