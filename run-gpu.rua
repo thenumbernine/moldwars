@@ -2,7 +2,6 @@
 -- I can't believe how slow this goes in numo9
 local template = require 'template'
 local gl = require 'gl'
-local glreport = require 'gl.report'
 local GLTex2D = require 'gl.tex2d'
 local GLPingPong = require 'gl.pingpong'
 local GLSceneObject = require 'gl.sceneobject'
@@ -196,6 +195,5 @@ App.update = |:|do
 	gl.glViewport(0, 0, self.width, self.height)
 	
 	self.drawObj:draw()
-glreport'here'
 end
 App():run()
