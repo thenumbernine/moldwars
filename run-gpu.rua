@@ -1,7 +1,7 @@
 #!/usr/bin/env rua
 -- I can't believe how slow this goes in numo9
 local template = require 'template'
-local gl = require 'gl'
+local gl = require 'gl.setup'(cmdline.gl)
 local GLTex2D = require 'gl.tex2d'
 local GLPingPong = require 'gl.pingpong'
 local GLSceneObject = require 'gl.sceneobject'
@@ -62,11 +62,12 @@ void main() {
 }
 ]],
 			fragmentCode = [[
+precision highp usampler2D;	// needed by #version 300 es
 uniform usampler2D tex;
 in vec2 tcv;
 out vec4 fragColor;
 void main() {
-	fragColor = (1./255.) * vec4(texture(tex, tcv, 0));
+	fragColor = (1./255.) * vec4(texture(tex, tcv, 0.));
 }
 ]],
 			uniforms = {
@@ -89,6 +90,7 @@ void main() {
 }
 ]],
 			fragmentCode = template([[
+precision highp usampler2D;	// needed by #version 300 es
 uniform usampler2D tex;
 uniform vec3 noiseOfs;
 out uvec4 fragColor;
@@ -100,7 +102,7 @@ float random(vec2 st) {
 
 void main() {
 	// TODO better randomization
-	uint noise = uint(63. * (random(noiseOfs.xy + vec2(gl_FragCoord.xy) / textureSize(tex, 0)) + noiseOfs.z - 1.));
+	uint noise = uint(63. * (random(noiseOfs.xy + vec2(gl_FragCoord.xy) / vec2(textureSize(tex, 0))) + noiseOfs.z - 1.));
 	ivec2 itc = ivec2(gl_FragCoord);
 	if ((noise & 2u) == 0u) {
 		if ((noise & 1u) == 0u) {
