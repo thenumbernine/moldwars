@@ -1,6 +1,6 @@
 #!/usr/bin/env rua
 -- I can't believe how slow this goes in numo9
-local App = require 'glapp':subclass()
+local App = require 'gl.app':subclass()
 local gl = require 'gl'
 local GLTex2D = require 'gl.tex2d'
 local GLSceneObject = require 'gl.sceneobject'

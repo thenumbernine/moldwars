@@ -8,7 +8,7 @@ local GLSceneObject = require 'gl.sceneobject'
 local GLGeometry = require 'gl.geometry'
 local GLFramebuffer = require 'gl.framebuffer'
 
-local App = require 'glapp':subclass()
+local App = require 'gl.app':subclass()
 
 App.title = 'MoldWars'
 

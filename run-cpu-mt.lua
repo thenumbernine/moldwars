@@ -76,7 +76,7 @@ end
 --]===]
 }
 
-local App = require 'glapp':subclass()
+local App = require 'gl.app':subclass()
 App.title = 'MoldWars'
 
 App.width = texWidth * 3

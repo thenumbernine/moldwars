@@ -1,0 +1,18 @@
+--------------------------------------------
+-- generated with dist/build-distinfo.rua --
+--------------------------------------------
+
+name = "moldwars"
+files = {
+	"run-cpu-mt-pureffi.lua",
+	"run-cpu-mt.lua",
+	"run-cpu-mt.rua",
+	"run-cpu.rua",
+	"run-gpu.rua",
+}
+deps = {
+	"ext",
+	"gl",
+	"template",
+	"thread",
+}
